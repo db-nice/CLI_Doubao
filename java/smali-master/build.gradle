@@ -1,0 +1,453 @@
+/*
+ * Copyright 2012, Google Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ * copyright notice, this list of conditions and the following disclaimer
+ * in the documentation and/or other materials provided with the
+ * distribution.
+ *     * Neither the name of Google Inc. nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+apply plugin: 'java'
+apply plugin: 'idea'
+
+/** ------------------------------
+ * 必要仓库
+ * ------------------------------ */
+allprojects {
+    repositories {
+        mavenCentral()
+    }
+}
+
+/** ------------------------------
+ * 版本与基础变量（和你原始的逻辑保持一致）
+ * ------------------------------ */
+version = '2.5.2'
+def jcommanderVersion = ''
+
+if (!('release' in gradle.startParameter.taskNames)) {
+    jcommanderVersion = 'com.beust:jcommander:1.48'
+
+    def versionSuffix
+    try {
+        def git = org.eclipse.jgit.api.Git.open(file('.'))
+        def head = git.getRepository().getRef('HEAD')
+        versionSuffix = head.getObjectId().abbreviate(8).name()
+
+        if (!git.status().call().clean) {
+            versionSuffix += '-dirty'
+        }
+    } catch (Exception) {
+        versionSuffix = ''
+    }
+
+    version += "${versionSuffix}"
+} else {
+    jcommanderVersion = 'com.beust:jcommander:1.64'
+}
+
+task release() {}
+
+task(install).doLast {
+    println "Installing version: ${version}"
+}
+
+/** ------------------------------
+ * 发布到 Maven 的子项目清单（保持不变）
+ * ------------------------------ */
+def maven_release_projects = ['smali', 'baksmali', 'dexlib2', 'util']
+
+/** ------------------------------
+ * 子项目通用配置（保持大部分原样）
+ * ------------------------------ */
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'idea'
+
+    tasks.withType(Test) {
+        enabled = false
+
+    }
+
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+    }
+
+    tasks.withType(Javadoc) {
+        options.encoding = 'UTF-8'
+        options.charSet = 'UTF-8'
+        options.docEncoding = 'UTF-8'
+
+        if (JavaVersion.current().isJava8Compatible()) {
+            options.addStringOption('Xdoclint:none', '-quiet')
+        }
+    }
+
+    version = parent.version
+
+    java {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    // ----------------------------
+    // 保留 depends map 的所有键（避免 null 依赖错误）
+    // 你可以在这里改版本号，但不要删除键
+    // ----------------------------
+    ext {
+        depends = [
+                guava         : 'com.google.guava:guava:27.1-android',
+                findbugs      : 'com.google.code.findbugs:jsr305:1.3.9',
+                junit         : 'junit:junit:4.12',
+                mockito       : 'org.mockito:mockito-core:1.10.19',
+                antlr_runtime : 'org.antlr:antlr-runtime:3.5.2',
+                antlr         : 'org.antlr:antlr:3.5.2',
+                stringtemplate: 'org.antlr:stringtemplate:3.2.1',
+                jflex_plugin  : 'org.xbib.gradle.plugin:gradle-plugin-jflex:1.1.0',
+                proguard_gradle: 'net.sf.proguard:proguard-gradle:6.2.2',
+                dx            : 'com.google.android.tools:dx:1.7',
+                gson          : 'com.google.code.gson:gson:2.3.1',
+                jcommander    : jcommanderVersion
+        ]
+    }
+
+    repositories {
+        mavenCentral()
+    }
+
+    if (project.name in maven_release_projects) {
+        apply plugin: 'maven-publish'
+        apply plugin: 'signing'
+
+        group = 'org.smali'
+
+        publishing {
+            publications {
+                mavenJava(MavenPublication) {
+                    artifactId = project.name
+                    from components.java
+                    versionMapping {
+                        usage('java-api') {
+                            fromResolutionOf('runtimeClasspath')
+                        }
+                        usage('java-runtime') {
+                            fromResolutionResult()
+                        }
+                    }
+
+                    pom {
+                        name = project.name
+                        url = 'http://smali.org'
+
+                        licenses {
+                            license {
+                                name = 'The BSD 3-Clause License'
+                                url = 'http://opensource.org/licenses/BSD-3-Clause'
+                                distribution = 'repo'
+                            }
+                        }
+                        scm {
+                            connection = 'scm:git:git://github.com/JesusFreke/smali.git'
+                            developerConnection = 'scm:git:git@github.com:JesusFreke/smali.git'
+                        }
+                        developers {
+                            developer {
+                                id = 'jesusfreke'
+                                name = 'Ben Gruver'
+                                email = 'jesusfreke@jesusfreke.com'
+                            }
+                        }
+                    }
+                }
+            }
+            if (rootProject.hasProperty('sonatypeUsername') && rootProject.hasProperty('sonatypePassword')) {
+                repositories {
+                    maven {
+                        url = 'https://oss.sonatype.org/service/local/staging/deploy/maven2/'
+                        credentials {
+                            username sonatypeUsername
+                            password sonatypePassword
+                        }
+                    }
+                }
+            }
+        }
+
+        signing {
+            required { gradle.taskGraph.hasTask('publish') }
+            sign(publishing.publications["mavenJava"])
+        }
+
+        java {
+            withJavadocJar()
+            withSourcesJar()
+        }
+
+        tasks.getByPath(':release').dependsOn(publish)
+    }
+}
+
+/** ------------------------------
+ * buildscript：加入 Shadow 插件与 jgit（和你原来的一样）
+ * ------------------------------ */
+buildscript {
+    repositories {
+        mavenCentral()
+        maven { url "https://plugins.gradle.org/m2/" }
+    }
+    dependencies {
+        classpath 'org.eclipse.jgit:org.eclipse.jgit:2.0.0.201206130900-r'
+        classpath "com.github.jengelman.gradle.plugins:shadow:6.1.0"   // 兼容 Gradle 6.x
+    }
+}
+
+/** ------------------------------
+ * wrapper
+ * ------------------------------ */
+wrapper {
+    gradleVersion = '6.8.2'
+    distributionType = Wrapper.DistributionType.ALL
+}
+
+/** ------------------------------
+ * 自动合并 + 输出 dex（你的原始逻辑）
+ * ------------------------------ */
+apply plugin: "com.github.johnrengelman.shadow"
+
+// 确保在根构建时，子项目使用到的 repo 都可用
+subprojects {
+    repositories {
+        mavenCentral()
+    }
+}
+
+// Shadow 合并前，确保子项目都先 build（尽量保留你的原意）
+shadowJar.dependsOn subprojects.build
+
+// 合并所有模块输出（保留你的实现）
+dependencies {
+    implementation project(":smali")
+    implementation project(":baksmali")
+    implementation project(":dexlib2")
+    implementation project(":util")
+
+    // 如果模块输出有 jar 也加入
+    subprojects.each { p ->
+        def lib = new File(p.projectDir, "build/libs")
+        if (lib.exists()) {
+            implementation fileTree(dir: lib, include: ['*.jar'])
+        }
+    }
+}
+
+/** ------------------------------
+ * ShadowJar 配置 - 创建完整的合并JAR（包含所有依赖）
+ * ------------------------------ */
+shadowJar {
+    archiveBaseName.set("smali_all")
+    archiveVersion.set("")
+    archiveClassifier.set("merged")
+    // 不在这里排除任何内容，保持完整的JAR
+}
+
+/** ------------------------------
+ * 缓存管理：计算输入文件的哈希值
+ * ------------------------------ */
+def calculateInputHash = {
+    def inputFiles = files(
+            // 包含所有子项目的源码和资源
+            fileTree(dir: '.', includes: ['**/*.java', '**/*.gradle', '**/build.gradle']),
+            // 包含依赖配置
+            configurations.runtimeClasspath
+    )
+
+    def hasher = java.security.MessageDigest.getInstance("MD5")
+    inputFiles.each { file ->
+        if (file.exists()) {
+            if (file.isFile()) {
+                file.eachByte(1024 * 1024) { bytes, size ->
+                    hasher.update(bytes, 0, size)
+                }
+            }
+            // 也包含文件路径和最后修改时间
+            hasher.update(file.absolutePath.bytes)
+            hasher.update(file.lastModified().toString().bytes)
+        }
+    }
+
+    // 添加项目版本到哈希计算
+    hasher.update(version.toString().bytes)
+
+    return hasher.digest().encodeHex().toString()
+}
+
+/** ------------------------------
+ * 创建用于DEX的剥离版本JAR
+ * ------------------------------ */
+task createStrippedJarForDex {
+    // 计算当前输入哈希
+    def currentHash = calculateInputHash()
+    def hashFile = file("${buildDir}/tmp/dex_cache_hash.txt")
+    def strippedJar = file("${buildDir}/libs/smali_all-stripped.jar")
+
+    // 只有当输入发生变化时才执行
+    inputs.files(fileTree(dir: '.', includes: ['**/*.java', '**/*.gradle', '**/build.gradle']))
+    inputs.property("version", version)
+    inputs.files(configurations.runtimeClasspath)
+    outputs.file(strippedJar)
+
+    doFirst {
+        // 检查缓存是否有效
+        def cachedHash = hashFile.exists() ? hashFile.text : null
+
+        if (cachedHash == currentHash && strippedJar.exists()) {
+            logger.lifecycle("DEX cache is up-to-date, skipping stripped JAR creation")
+            return
+        }
+
+        // 缓存失效，删除旧的剥离JAR
+        if (strippedJar.exists()) {
+            logger.lifecycle("DEX cache invalidated, deleting old stripped JAR")
+            strippedJar.delete()
+        }
+    }
+
+    doLast {
+        def originalJar = shadowJar.archiveFile.get().asFile
+
+        if (!originalJar.exists()) {
+            throw new GradleException("No merged jar found at ${originalJar}. Please run shadowJar first.")
+        }
+
+        def tmpDir = file("$buildDir/tmp/strippedContents")
+        delete tmpDir
+        tmpDir.mkdirs()
+
+        // 解压原始JAR，排除stringtemplate相关类
+        copy {
+            from zipTree(originalJar)
+            exclude 'org/antlr/stringtemplate/**'
+            exclude 'org/stringtemplate/**'
+            exclude 'org/antlr/runtime/**'
+            exclude 'org/antlr/**/stringtemplate/**'
+            into tmpDir
+        }
+
+        // 创建剥离后的JAR
+        ant.zip(destfile: strippedJar, basedir: tmpDir)
+
+        // 保存当前哈希到缓存文件
+        hashFile.parentFile.mkdirs()
+        hashFile.text = currentHash
+
+        // 清理临时目录
+        delete tmpDir
+        logger.lifecycle("Created stripped jar for DEX: ${strippedJar}")
+    }
+}
+
+/** ------------------------------
+ * 清理DEX缓存任务
+ * ------------------------------ */
+task cleanDexCache {
+    doLast {
+        def hashFile = file("${buildDir}/tmp/dex_cache_hash.txt")
+        def strippedJar = file("${buildDir}/libs/smali_all-stripped.jar")
+        def dexOutputDir = file("${buildDir}/dex")
+
+        if (hashFile.exists()) {
+            hashFile.delete()
+            logger.lifecycle("Deleted DEX cache hash file")
+        }
+        if (strippedJar.exists()) {
+            strippedJar.delete()
+            logger.lifecycle("Deleted stripped JAR")
+        }
+        if (dexOutputDir.exists()) {
+            delete dexOutputDir
+            logger.lifecycle("Deleted DEX output directory")
+        }
+    }
+}
+
+// 将cleanDexCache添加到全局clean任务
+clean.dependsOn cleanDexCache
+
+/** ------------------------------
+ * buildDex 任务 - 使用剥离后的JAR
+ * ------------------------------ */
+task buildDex(type: Exec) {
+    dependsOn createStrippedJarForDex
+
+    def outDir = "${buildDir}/dex"
+    // 使用剥离后的JAR来构建DEX
+    def inputJar = "${buildDir}/libs/smali_all-stripped.jar"
+
+    doFirst {
+        file(outDir).mkdirs()
+        if (!file(inputJar).exists()) {
+            throw new GradleException("Stripped JAR not found at ${inputJar}. Please run createStrippedJarForDex first.")
+        }
+    }
+
+    // 改成你真实的 d8 路径
+    commandLine "E:\\Program\\Android\\Sdk\\build-tools\\34.0.0\\d8.bat",
+            inputJar, "--output", outDir
+
+    doLast {
+        logger.lifecycle("DEX files generated in: ${outDir}")
+    }
+}
+
+/** ------------------------------
+ * 任务分组和描述
+ * ------------------------------ */
+shadowJar {
+    group = 'build'
+    description = '创建完整的合并JAR（包含所有依赖）'
+}
+
+createStrippedJarForDex {
+    group = 'build'
+    description = '创建用于DEX构建的剥离版本JAR'
+}
+
+buildDex {
+    group = 'build'
+    description = '构建DEX文件（使用剥离后的JAR）'
+}
+
+cleanDexCache {
+    group = 'build'
+    description = '清理DEX构建缓存'
+}
+
+/** ------------------------------
+ * 使用说明：
+ * - 构建完整JAR: ./gradlew shadowJar
+ * - 构建DEX: ./gradlew buildDex
+ * - 清理所有: ./gradlew clean
+ * - 只清理DEX缓存: ./gradlew cleanDexCache
+ * ------------------------------ */

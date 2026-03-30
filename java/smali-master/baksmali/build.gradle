@@ -1,0 +1,126 @@
+/*
+ * Copyright 2012, Google Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above
+ * copyright notice, this list of conditions and the following disclaimer
+ * in the documentation and/or other materials provided with the
+ * distribution.
+ *     * Neither the name of Google Inc. nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+repositories {
+    // 阿里云 Maven 镜像（优先）
+    maven { url 'https://maven.aliyun.com/repository/public/' }
+    // 备用仓库
+    maven { url 'https://maven.aliyun.com/repository/central/' }
+    // 官方仓库（兜底）
+    mavenCentral()
+    google() // 如果是 Android 项目，保留 google 仓库
+}
+
+// 如果有 buildscript 块，也要同步修改
+buildscript {
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/public/' }
+        maven { url 'https://maven.aliyun.com/repository/central/' }
+        mavenCentral()
+        google()
+    }
+}
+dependencies {
+    implementation project(':util')
+    api project(':dexlib2')
+    implementation depends.guava
+    implementation depends.jcommander
+
+    testImplementation depends.junit
+    testImplementation project(':smali')
+    testImplementation depends.antlr_runtime
+}
+
+sourceSets {
+    main {
+        java {
+            // Exclude Android-only UI helpers and unfinished desktop-incompatible tooling
+            exclude 'ma/dexter/ui/**'
+            exclude 'ma/dexter/util/DexUtils.java'
+            exclude 'org/jf/baksmali/sposkosm/tools/RenameClassTool.java'
+        }
+    }
+}
+
+processResources.inputs.property('version', version)
+processResources.expand('version': version)
+
+// Build a separate jar that contains all dependencies
+task fatJar(type: Jar) {
+    from sourceSets.main.output
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+
+    classifier = 'fat'
+
+    manifest {
+        attributes('Main-Class': 'org.jf.baksmali.Main')
+    }
+
+    doLast {
+        if (!System.getProperty('os.name').toLowerCase().contains('windows')) {
+            ant.symlink(link: file("${destinationDirectory.get()}/baksmali.jar"), resource: archivePath, overwrite: true)
+        }
+    }
+}
+fatJar.dependsOn(project(':util').tasks.named('jar'))
+fatJar.dependsOn(project(':dexlib2').tasks.named('jar'))
+tasks.getByPath('build').dependsOn(fatJar)
+
+publish {
+    publishing {
+        publications {
+            mavenJava(MavenPublication) {
+                pom {
+                    description = 'baksmali is a disassembler for dalvik bytecode'
+                    scm {
+                        url = 'https://github.com/JesusFreke/smali/tree/master/baksmali'
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+task fastbuild(dependsOn: build) {
+}
+
+task fb(dependsOn: fastbuild) {
+}
+
+tasks.getByPath('javadoc').onlyIf({
+    !gradle.taskGraph.hasTask(fastbuild)
+})
+
+tasks.getByPath('test').onlyIf({
+    !gradle.taskGraph.hasTask(fastbuild)
+})

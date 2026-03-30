@@ -1,0 +1,225 @@
+/*
+ * Copyright 2012, Google Inc.
+ * All rights reserved.
+ *
+ * BSD License…
+ */
+
+apply plugin: 'antlr'
+apply plugin: 'org.xbib.gradle.plugin.jflex'
+apply plugin: 'idea'
+
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath "org.xbib.gradle.plugin:gradle-plugin-jflex:1.1.0"
+        classpath 'net.sf.proguard:proguard-gradle:6.2.2'
+    }
+}
+
+/** -----------------------------------------------------------
+ *  判断是否为 Android 构建
+ * ----------------------------------------------------------- */
+def isAndroid =
+        project.plugins.findPlugin("com.android.library") != null ||
+                project.plugins.findPlugin("com.android.application") != null
+
+println "Smali → Android Mode = ${isAndroid}"
+
+/** -----------------------------------------------------------
+ *  依赖排除（构建期必须保留 ST4，不可排）
+ *  运行期排除在 fatJar / ProGuard 中处理
+ * ----------------------------------------------------------- */
+configurations {
+    // 移除完整 antlr（插件自带的老版本）
+    implementation.exclude group: 'org.antlr', module: 'antlr'
+
+    // Android 环境额外排除一些库（你之前的逻辑）
+    all {
+        if (isAndroid) {
+            exclude group: 'org.checkerframework'
+            exclude group: 'org.codehaus.mojo'
+            exclude group: 'com.google.code.findbugs'
+            exclude group: 'com.github.spotbugs'
+            exclude group: 'com.android.tools.lint'
+            exclude module: 'jna'
+
+            // 只排 ST3，不排 ST4（构建期必须保留）
+            exclude group: 'org.antlr', module: 'stringtemplate'   // ST3
+            exclude group: 'org.antlr', module: 'antlr-runtime'    // 旧 runtime
+        }
+    }
+}
+
+/** -----------------------------------------------------------
+ *  资源包含 .tokens
+ * ----------------------------------------------------------- */
+sourceSets {
+    main {
+        resources {
+            srcDir 'build/generated-src/antlr/main'
+        }
+    }
+}
+
+tasks.named('processResources') {
+    dependsOn(generateGrammarSource)
+}
+
+tasks.named('compileJava') {
+    dependsOn(generateGrammarSource, jflex)
+}
+
+tasks.named('sourcesJar') {
+    dependsOn(generateGrammarSource, jflex)
+}
+
+/** -----------------------------------------------------------
+ * IDEA 配置
+ * ----------------------------------------------------------- */
+idea {
+    module {
+        excludeDirs -= buildDir
+        if (buildDir.exists()) {
+            excludeDirs.addAll(buildDir.listFiles())
+        }
+        for (sourceDir in (sourceDirs + testSourceDirs)) {
+            excludeDirs.remove(sourceDir)
+            while ((sourceDir = sourceDir.getParentFile()) != null) {
+                excludeDirs.remove(sourceDir)
+            }
+        }
+    }
+}
+
+/** -----------------------------------------------------------
+ * 依赖
+ *（注意：ST4 必须存在用于 generateGrammarSource）
+ * ----------------------------------------------------------- */
+dependencies {
+    implementation project(':util')
+    api project(':dexlib2')
+
+    implementation depends.antlr_runtime
+    implementation depends.jcommander
+    implementation depends.stringtemplate
+    implementation depends.guava
+
+    testImplementation depends.junit
+
+    antlr depends.antlr
+}
+
+processResources.inputs.property('version', version)
+processResources.expand('version': version)
+
+/** -----------------------------------------------------------
+ * fatJar（封装时排除 ST4 / antlr-runtime / stringtemplate）
+ * ----------------------------------------------------------- */
+task fatJar(type: Jar, dependsOn: jar) {
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath.collect {
+            it.isDirectory() ? it : zipTree(it)
+        }
+    }
+
+    classifier = 'fat'
+
+    manifest {
+        attributes('Main-Class': 'org.jf.smali.Main')
+    }
+
+    // 打包时排除 ANTLR runtime / ST4 / ST3
+    exclude "org/antlr/stringtemplate/**"
+    exclude "org/stringtemplate/**"
+
+    doLast {
+        if (!System.getProperty('os.name').toLowerCase().contains('windows')) {
+            ant.symlink(
+                    link: file("${destinationDirectory.get()}/smali.jar"),
+                    resource: archivePath,
+                    overwrite: true
+            )
+        }
+    }
+}
+fatJar.dependsOn(project(':util').tasks.named('jar'))
+fatJar.dependsOn(project(':dexlib2').tasks.named('jar'))
+
+tasks.getByPath('build').dependsOn(fatJar)
+
+/** -----------------------------------------------------------
+ * ANTLR 输出路径
+ * ----------------------------------------------------------- */
+generateTestGrammarSource {
+    outputDirectory = new File(outputDirectory, 'org/jf/smali')
+}
+
+generateGrammarSource {
+    outputDirectory = new File(outputDirectory, 'org/jf/smali')
+}
+
+/** -----------------------------------------------------------
+ * JFlex 输出路径
+ * ----------------------------------------------------------- */
+jflex {
+    generateDir = new File(generateDir, 'org/jf/smali')
+}
+
+/** -----------------------------------------------------------
+ * 发布
+ * ----------------------------------------------------------- */
+publish {
+    publishing {
+        publications {
+            mavenJava(MavenPublication) {
+                pom {
+                    description = 'smali is an assembler for dalvik bytecode'
+                    scm {
+                        url = 'https://github.com/JesusFreke/smali/tree/master/smali'
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** -----------------------------------------------------------
+ * ProGuard smallJar（排除所有 ANTLR / ST4）
+ * ----------------------------------------------------------- */
+task proguard(type: proguard.gradle.ProGuardTask, dependsOn: fatJar) {
+    def outFile = fatJar.destinationDirectory.file(
+            "${fatJar.archiveBaseName.get()}-${fatJar.archiveVersion.get()}-small.${fatJar.archiveExtension.get()}"
+    )
+
+    injars fatJar
+    outjars outFile
+
+    if (JavaVersion.current().isJava9Compatible()) {
+        libraryjars(System.getProperty("java.home") + "/jmods")
+    } else {
+        libraryjars(System.getProperty("java.home") + "/lib/rt.jar")
+    }
+
+    dontobfuscate
+    dontoptimize
+
+    keep 'public class org.jf.smali.Main { public static void main(java.lang.String[]); }'
+    keep 'class com.beust.jcommander.** { *; }'
+    keepclassmembers 'enum * { public static **[] values(); public static ** valueOf(java.lang.String); }'
+
+    dontwarn 'com.google.common.**'
+    dontnote 'com.google.common.**'
+
+    // smallJar 中强制排除所有 ANTLR / ST / ST4
+    skipnonpubliclibraryclasses
+}
+
+sourcesJar {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+}
+
+tasks.getByPath(':release').dependsOn(proguard)
