@@ -1,0 +1,10 @@
+from fastapi import APIRouter, HTTPException
+
+
+router = APIRouter()
+
+
+@router.post("/upload")
+async def api_upload(*args, **kwargs):
+    """??/??????????"""
+    raise HTTPException(status_code=410, detail="??/?????????")

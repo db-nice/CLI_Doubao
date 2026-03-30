@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doubao Free API 控制台</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <section class="brand-card">
+                <p class="eyebrow">Doubao Free API</p>
+                <h1>中转控制台</h1>
+                <p class="brand-copy">
+                    登录态和游客态共用一套发送流程。没有可复用缓存时，会先拉起可见验证窗口，
+                    等待验证完成后用第一次真实发送自动完成 capture 和持久化。
+                </p>
+            </section>
+
+            <section class="panel">
+                <label class="field-label" for="session-mode-select">会话模式</label>
+                <select id="session-mode-select" class="mode-select">
+                    <option value="auth">登录态</option>
+                    <option value="guest">游客态</option>
+                    <option value="auto">自动</option>
+                </select>
+                <p id="session-mode-hint" class="field-hint"></p>
+
+                <div class="sidebar-actions">
+                    <button id="new-chat-btn" class="primary-btn">
+                        <i class="bi bi-plus-lg"></i>
+                        新建对话
+                    </button>
+                    <button id="refresh-runtime-status-btn" class="secondary-btn">
+                        <i class="bi bi-arrow-clockwise"></i>
+                        刷新状态
+                    </button>
+                    <button id="open-runtime-btn" class="secondary-btn">
+                        <i class="bi bi-window-stack"></i>
+                        打开验证窗口
+                    </button>
+                </div>
+            </section>
+
+            <section id="guest-session-panel" class="panel guest-session-panel hidden">
+                <div class="panel-header">
+                    <h2>游客缓存池</h2>
+                    <button id="refresh-guest-snapshots-btn" class="ghost-btn" type="button" title="刷新游客缓存">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+                <p id="guest-session-summary" class="panel-summary">
+                    这里显示缓存池摘要，不显示具体会话内容。
+                </p>
+                <p class="field-hint guest-session-copy">
+                    最多保存 5 个会话，可在当前缓存和备份缓存之间快速切换。
+                </p>
+                <div class="guest-session-list-shell">
+                    <div id="guest-session-list" class="guest-session-list"></div>
+                </div>
+            </section>
+
+            <section class="panel panel-grow">
+                <div class="panel-header">
+                    <h2>会话列表</h2>
+                    <span id="conversation-mode-badge" class="mode-badge">游客态</span>
+                </div>
+                <p id="conversation-list-summary" class="panel-summary">
+                    这里仅显示当前选中缓存池里的会话。
+                </p>
+                <div class="conversation-list-shell">
+                    <div id="conversation-list" class="conversation-list"></div>
+                </div>
+            </section>
+        </aside>
+
+        <main class="main-panel">
+            <header class="chat-header">
+                <div class="chat-header-copy">
+                    <p class="eyebrow">当前上下文</p>
+                    <h2 id="current-conversation-title">新对话</h2>
+                    <div class="conversation-stats">
+                        <span id="conversation-user-count" class="conversation-stat-chip">用户 0</span>
+                        <span id="conversation-assistant-count" class="conversation-stat-chip">回复 0</span>
+                    </div>
+                </div>
+                <div class="chat-actions">
+                    <button id="export-context-btn" class="secondary-btn" title="导出当前上下文">
+                        <i class="bi bi-download"></i>
+                        导出上下文
+                    </button>
+                    <button id="delete-chat-btn" class="icon-btn" title="删除当前会话">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </header>
+
+            <section id="runtime-banner" class="runtime-banner hidden">
+                <div class="runtime-banner-copy">
+                    <strong id="runtime-banner-title">运行时准备</strong>
+                    <p id="runtime-banner-text">这里会显示验证窗口和 capture 的状态。</p>
+                </div>
+                <div class="runtime-banner-actions">
+                    <button id="runtime-retry-btn" class="secondary-btn">继续等待</button>
+                    <button id="runtime-hide-btn" class="ghost-btn">收起</button>
+                </div>
+            </section>
+
+            <section class="chat-stage">
+                <section id="chat-container" class="chat-container">
+                <div class="welcome-card">
+                    <p class="eyebrow">准备就绪</p>
+                    <h2>开始一条新消息</h2>
+                    <p>如果当前没有可复用缓存，发送前会自动拉起可见验证窗口，并在首条真实消息里完成 capture。</p>
+                </div>
+            </section>
+
+            <footer class="composer">
+                <div class="composer-options">
+                    <label class="toggle">
+                        <input type="checkbox" id="use-sse-stream">
+                        SSE 流式返回
+                    </label>
+                    <label class="toggle">
+                        <input type="checkbox" id="use-auto-cot">
+                        使用自动推理
+                    </label>
+                    <label class="toggle">
+                        <input type="checkbox" id="use-deep-think">
+                        使用深度思考
+                    </label>
+                    <label class="toggle toggle-select" for="think-mode">
+                        <span>模式覆盖</span>
+                        <select id="think-mode" class="mode-select mode-select-compact">
+                            <option value="">跟随开关</option>
+                            <option value="0">快速模式</option>
+                            <option value="1">思考模式</option>
+                            <option value="3">深度思考</option>
+                        </select>
+                    </label>
+                </div>
+
+                <div class="composer-row">
+                    <textarea id="message-input" rows="1" placeholder="输入消息，系统会自动处理验证与首发 capture。"></textarea>
+                    <button id="send-btn" class="send-btn" title="发送">
+                        <i class="bi bi-send"></i>
+                    </button>
+                </div>
+            </footer>
+            </section>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', path='/js/app.js') }}"></script>
+</body>
+</html>
